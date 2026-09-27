@@ -31,3 +31,13 @@ def create_place(
 @router.get("/", response_model=list[schemas.PlaceResponse])
 def get_all_places(db: Session = Depends(get_db)):
     return crud.get_all_places(db)
+
+
+@router.patch("/{place_id}/location", response_model=schemas.PlaceResponse)
+def update_place_location(
+    place_id: int,
+    location: schemas.PlaceLocationUpdate,
+    db: Session = Depends(get_db)
+):
+    """Set/update a place's coordinates — needed for places created before GPS support was added."""
+    return crud.update_place_location(db, place_id, location)

@@ -35,7 +35,6 @@ def login_user(db: Session, email: str, password: str):
 
 
 # ================= RIDES =================
-# Fare rate — total ride price is calculated as distance (from Dijkstra) x this rate.
 RATE_PER_KM = 25
 
 
@@ -57,7 +56,6 @@ def create_ride(db: Session, ride: schemas.RideCreate):
     if ride.total_seats <= 0:
         raise HTTPException(status_code=400, detail="total_seats must be greater than 0")
 
-    # Calculate distance via Dijkstra over Places/Roads, then price = distance x RATE_PER_KM
     route = find_shortest_path(db, ride.source_place_id, ride.destination_place_id)
     if not route["path"]:
         raise HTTPException(
@@ -73,7 +71,7 @@ def create_ride(db: Session, ride: schemas.RideCreate):
         departure_time=ride.departure_time,
         vehicle_type=ride.vehicle_type,
         total_seats=ride.total_seats,
-        available_seats=ride.total_seats,   # starts full at creation
+        available_seats=ride.total_seats,
         price=calculated_price
     )
     db.add(db_ride)
@@ -95,7 +93,6 @@ def get_ride(db: Session, ride_id: int):
 
 # ================= FARE SPLIT HELPER =================
 def _recompute_fare_split(db: Session, ride: models.Ride):
-    """Equal split of ride.price among all currently APPROVED bookings on this ride."""
     approved_bookings = (
         db.query(models.Booking)
         .filter(
@@ -131,7 +128,6 @@ def create_booking(db: Session, booking: schemas.BookingCreate):
     if ride.available_seats < booking.seats_booked:
         raise HTTPException(status_code=400, detail="Not enough seats available")
 
-    # Existing passengers whose approval is required (already approved on this ride)
     existing_approved = (
         db.query(models.Booking)
         .filter(
@@ -153,8 +149,6 @@ def create_booking(db: Session, booking: schemas.BookingCreate):
     )
     db.add(db_booking)
 
-    # Reserve the seats immediately (whether pending or approved) so the ride can't be overbooked
-    # while approvals are outstanding. Seats are released again on reject/cancel.
     ride.available_seats -= booking.seats_booked
     if ride.available_seats == 0:
         ride.status = "Full"
@@ -164,7 +158,6 @@ def create_booking(db: Session, booking: schemas.BookingCreate):
     db.refresh(ride)
 
     if initial_status == models.BookingStatus.PENDING:
-        # Spawn one approval request per existing approved passenger
         for existing_booking in existing_approved:
             approval = models.BookingApproval(
                 booking_id=db_booking.booking_id,
@@ -174,7 +167,6 @@ def create_booking(db: Session, booking: schemas.BookingCreate):
             db.add(approval)
         db.commit()
     else:
-        # First passenger on the ride — approved immediately, gets 100% of fare for now
         _recompute_fare_split(db, ride)
 
     db.refresh(db_booking)
@@ -193,7 +185,7 @@ def get_booking(db: Session, booking_id: int):
 
 
 def get_booking_approvals(db: Session, booking_id: int):
-    get_booking(db, booking_id)  # 404 if missing
+    get_booking(db, booking_id)
     return (
         db.query(models.BookingApproval)
         .filter(models.BookingApproval.booking_id == booking_id)
@@ -208,7 +200,6 @@ def _release_seats(ride: models.Ride, seats: int):
 
 
 def decide_booking_approval(db: Session, booking_id: int, approver_booking_id: int, decision: str):
-    """decision is 'approved' or 'rejected'."""
     booking = get_booking(db, booking_id)
 
     if booking.status != models.BookingStatus.PENDING:
@@ -241,14 +232,12 @@ def decide_booking_approval(db: Session, booking_id: int, approver_booking_id: i
     ride = db.query(models.Ride).filter(models.Ride.ride_id == booking.ride_id).first()
 
     if approval.decision == models.ApprovalDecision.REJECTED:
-        # One rejection is enough to reject the whole booking request
         booking.status = models.BookingStatus.REJECTED
         _release_seats(ride, booking.seats_booked)
         db.commit()
         db.refresh(booking)
         return booking
 
-    # Check if every required approver has now approved
     all_approvals = (
         db.query(models.BookingApproval)
         .filter(models.BookingApproval.booking_id == booking_id)
@@ -265,7 +254,11 @@ def decide_booking_approval(db: Session, booking_id: int, approver_booking_id: i
 
 # ================= PLACES =================
 def create_place(db: Session, place: schemas.PlaceCreate):
-    db_place = models.Place(place_name=place.place_name)
+    db_place = models.Place(
+        place_name=place.place_name,
+        latitude=place.latitude,
+        longitude=place.longitude,
+    )
     db.add(db_place)
     db.commit()
     db.refresh(db_place)
@@ -274,6 +267,48 @@ def create_place(db: Session, place: schemas.PlaceCreate):
 
 def get_all_places(db: Session):
     return db.query(models.Place).all()
+
+
+def update_place_location(db: Session, place_id: int, location: schemas.PlaceLocationUpdate):
+    """Backfill/update coordinates on an existing place (e.g. one created before this feature)."""
+    place = db.query(models.Place).filter(models.Place.place_id == place_id).first()
+    if place is None:
+        raise HTTPException(status_code=404, detail="Place not found")
+    place.latitude = location.latitude
+    place.longitude = location.longitude
+    db.commit()
+    db.refresh(place)
+    return place
+
+
+# ================= LIVE RIDE LOCATION =================
+def update_ride_location(db: Session, ride_id: int, location: schemas.RideLocationUpdate):
+    ride = db.query(models.Ride).filter(models.Ride.ride_id == ride_id).first()
+    if ride is None:
+        raise HTTPException(status_code=404, detail="Ride not found")
+
+    row = db.query(models.RideLocation).filter(models.RideLocation.ride_id == ride_id).first()
+    if row is None:
+        row = models.RideLocation(
+            ride_id=ride_id,
+            latitude=location.latitude,
+            longitude=location.longitude,
+        )
+        db.add(row)
+    else:
+        row.latitude = location.latitude
+        row.longitude = location.longitude
+
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_ride_location(db: Session, ride_id: int):
+    row = db.query(models.RideLocation).filter(models.RideLocation.ride_id == ride_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No location shared for this ride yet")
+    return row
 
 
 # ================= ROADS =================

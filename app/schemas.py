@@ -56,10 +56,7 @@ class RideCreate(BaseModel):
     destination_place_id: int
     departure_time: datetime
     vehicle_type: VehicleType
-    total_seats: int          # capacity of the vehicle (e.g. auto=3, car=4/5, bus=6+)
-    # price is no longer provided by the client — it's calculated from the
-    # shortest-path distance between source_place_id and destination_place_id
-    # at a fixed rate per km (see crud.RATE_PER_KM).
+    total_seats: int
 
 
 class RideResponse(BaseModel):
@@ -109,7 +106,6 @@ class BookingApprovalResponse(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    # In production this should come from the JWT (current_user), not be passed in the body.
     approver_booking_id: int
 
 
@@ -127,11 +123,36 @@ class Token(BaseModel):
 # ================= PLACES =================
 class PlaceCreate(BaseModel):
     place_name: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class PlaceResponse(BaseModel):
     place_id: int
     place_name: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PlaceLocationUpdate(BaseModel):
+    latitude: float
+    longitude: float
+
+
+# ================= LIVE RIDE LOCATION =================
+class RideLocationUpdate(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class RideLocationResponse(BaseModel):
+    ride_id: int
+    latitude: float
+    longitude: float
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

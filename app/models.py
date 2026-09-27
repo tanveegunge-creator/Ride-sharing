@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, ForeignKey, Numeric, TIMESTAMP, Enum, func
+    Column, Integer, String, ForeignKey, Numeric, TIMESTAMP, Enum, func, Float
 )
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -53,6 +53,12 @@ class Place(Base):
     place_id = Column(Integer, primary_key=True, index=True)
     place_name = Column(String(100), unique=True, nullable=False)
 
+    # Nullable: existing places won't have these until backfilled via
+    # PATCH /places/{place_id}/location. A place with no coordinates
+    # simply isn't drawn on the map.
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
     source_rides = relationship(
         "Ride", foreign_keys="Ride.source_place_id", back_populates="source_place"
     )
@@ -84,12 +90,11 @@ class Ride(Base):
     destination_place_id = Column(Integer, ForeignKey("places.place_id"), nullable=False)
     departure_time = Column(TIMESTAMP, nullable=False)
 
-    # NEW: vehicle type + capacity
     vehicle_type = Column(Enum(VehicleType), nullable=False, default=VehicleType.CAR)
-    total_seats = Column(Integer, nullable=False)          # fixed capacity of the vehicle
-    available_seats = Column(Integer, nullable=False)      # seats not yet held (pending+approved reduce this)
+    total_seats = Column(Integer, nullable=False)
+    available_seats = Column(Integer, nullable=False)
 
-    price = Column(Numeric(10, 2), nullable=False)         # total fare for the ride
+    price = Column(Numeric(10, 2), nullable=False)
     status = Column(String(20), default="available")
 
     driver = relationship("User", back_populates="rides")
@@ -107,9 +112,8 @@ class Booking(Base):
     passenger_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     seats_booked = Column(Integer, nullable=False)
 
-    # NEW: approval state + fare split
     status = Column(Enum(BookingStatus), nullable=False, default=BookingStatus.PENDING)
-    fare_share = Column(Numeric(10, 2), nullable=True)   # computed once approved
+    fare_share = Column(Numeric(10, 2), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     ride = relationship("Ride", back_populates="bookings")
@@ -127,10 +131,28 @@ class BookingApproval(Base):
     __tablename__ = "booking_approvals"
 
     id = Column(Integer, primary_key=True, index=True)
-    booking_id = Column(Integer, ForeignKey("bookings.booking_id"), nullable=False)          # the new/pending booking
-    approver_booking_id = Column(Integer, ForeignKey("bookings.booking_id"), nullable=False)  # existing passenger's booking
+    booking_id = Column(Integer, ForeignKey("bookings.booking_id"), nullable=False)
+    approver_booking_id = Column(Integer, ForeignKey("bookings.booking_id"), nullable=False)
     decision = Column(Enum(ApprovalDecision), nullable=False, default=ApprovalDecision.PENDING)
     responded_at = Column(TIMESTAMP, nullable=True)
 
     booking = relationship("Booking", back_populates="approvals", foreign_keys=[booking_id])
     approver_booking = relationship("Booking", foreign_keys=[approver_booking_id])
+
+
+# ================= LIVE RIDE LOCATION =================
+class RideLocation(Base):
+    """
+    One row per ride, overwritten on every update from the driver's device.
+    This is the 'last known position' — used both as the initial value a
+    passenger sees before the WebSocket connects, and as a fallback if they
+    reconnect later (e.g. after a phone locks and drops the socket).
+    """
+    __tablename__ = "ride_locations"
+
+    ride_id = Column(Integer, ForeignKey("rides.ride_id"), primary_key=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    ride = relationship("Ride")

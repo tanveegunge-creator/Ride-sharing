@@ -1,47 +1,52 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import crud, schemas
-from ..database import SessionLocal
+from .. import models, schemas
+from ..database import get_db  # change this import if your get_db lives elsewhere
 
-router = APIRouter(
-    prefix="/roads",
-    tags=["Roads"]
-)
+router = APIRouter(prefix="/places", tags=["Places"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+@router.get("/", response_model=list[schemas.PlaceOut])
+def list_places(db: Session = Depends(get_db)):
+    return db.query(models.Place).order_by(models.Place.place_id).all()
 
 
-# Create Road
-@router.post("/", response_model=schemas.RoadResponse)
-def create_road(
-    road: schemas.RoadCreate,
-    db: Session = Depends(get_db)
-):
-    return crud.create_road(db, road)
-
-
-# Get All Roads
-@router.get("/", response_model=list[schemas.RoadResponse])
-def get_all_roads(
-    db: Session = Depends(get_db)
-):
-    return crud.get_all_roads(db)
-
-@router.get("/shortest-path/")
-def shortest_path(
-    source: int,
-    destination: int,
-    db: Session = Depends(get_db)
-):
-    return crud.find_shortest_path(
-        db,
-        source,
-        destination
+@router.post("/", response_model=schemas.PlaceOut)
+def create_place(place: schemas.PlaceCreate, db: Session = Depends(get_db)):
+    existing = (
+        db.query(models.Place)
+        .filter(models.Place.place_name == place.place_name)
+        .first()
     )
+    if existing:
+        raise HTTPException(status_code=400, detail="Place already exists")
+
+    new_place = models.Place(
+        place_name=place.place_name,
+        latitude=place.latitude,
+        longitude=place.longitude,
+    )
+    db.add(new_place)
+    db.commit()
+    db.refresh(new_place)
+    return new_place
+
+
+@router.patch("/{place_id}/location", response_model=schemas.PlaceOut)
+def update_place_location(
+    place_id: int,
+    location: schemas.PlaceLocationUpdate,
+    db: Session = Depends(get_db),
+):
+    place = (
+        db.query(models.Place).filter(models.Place.place_id == place_id).first()
+    )
+    if not place:
+        raise HTTPException(status_code=404, detail="Place not found")
+
+    place.latitude = location.latitude
+    place.longitude = location.longitude
+    db.commit()
+    db.refresh(place)
+    return place

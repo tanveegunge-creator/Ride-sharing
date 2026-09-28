@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getBookings, getRides, getPlaces } from "../api/client";
 import { getCurrentUserId, isLoggedIn } from "../utils/auth";
+import RideMap from "../components/RideMap";
 
 const statusColor = {
   approved: "#4a4",
@@ -20,6 +21,7 @@ export default function MyBookings() {
   const [error, setError] = useState("");
 
   const placeName = (id) => places.find((p) => p.place_id === id)?.place_name || `Place ${id}`;
+  const placeObj = (id) => places.find((p) => p.place_id === id) || null;
   const rideFor = (rideId) => rides.find((r) => r.ride_id === rideId);
 
   useEffect(() => {
@@ -89,6 +91,14 @@ export default function MyBookings() {
               )}
               {booking.status === "rejected" && (
                 <p style={{ color: "#c44" }}>This request was declined.</p>
+              )}
+
+              {booking.status === "approved" && ride && (
+                <RideMap
+                  rideId={ride.ride_id}
+                  sourcePlace={placeObj(ride.source_place_id)}
+                  destinationPlace={placeObj(ride.destination_place_id)}
+                />
               )}
             </div>
           );

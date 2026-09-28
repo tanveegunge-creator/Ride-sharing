@@ -1,187 +1,81 @@
-import { useEffect, useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  Polyline,
-  useMap,
-} from "react-leaflet";
-
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
+import { useEffect } from "react";
 
-const placeIcon = L.icon({
+L.Marker.prototype.options.icon = L.icon({
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
+  iconSize: [25, 41],
   iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
 });
 
-function FitRoute({ route }) {
+function FitBounds({ points }) {
   const map = useMap();
-
   useEffect(() => {
-    if (!route || route.length === 0) return;
-
-    const bounds = L.latLngBounds(route);
-    map.fitBounds(bounds, { padding: [30, 30] });
-  }, [route, map]);
-
+    if (points.length >= 2) {
+      map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+    } else if (points.length === 1) {
+      map.setView(points[0], 13);
+    }
+  }, [points, map]);
   return null;
 }
 
-export default function RouteMap({ sourcePlace, destinationPlace }) {
-  const [route, setRoute] = useState([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+// Straight-line distance in km between two [lat, lng] points
+function haversineKm([lat1, lon1], [lat2, lon2]) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(a));
+}
 
-  const sourceValid =
-    sourcePlace?.latitude != null &&
-    sourcePlace?.longitude != null;
-
-  const destinationValid =
-    destinationPlace?.latitude != null &&
-    destinationPlace?.longitude != null;
-
-  useEffect(() => {
-    if (!sourceValid || !destinationValid) {
-      setRoute([]);
-      return;
-    }
-
-    const getRoute = async () => {
-      setLoading(true);
-      setError("");
-
-      try {
-        const sourceLon = Number(sourcePlace.longitude);
-        const sourceLat = Number(sourcePlace.latitude);
-
-        const destinationLon = Number(destinationPlace.longitude);
-        const destinationLat = Number(destinationPlace.latitude);
-
-        const url =
-          `https://router.project-osrm.org/route/v1/driving/` +
-          `${sourceLon},${sourceLat};${destinationLon},${destinationLat}` +
-          `?overview=full&geometries=geojson`;
-
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error("Could not get route.");
-        }
-
-        const data = await response.json();
-
-        if (!data.routes || data.routes.length === 0) {
-          throw new Error("No road route found.");
-        }
-
-        const coordinates =
-          data.routes[0].geometry.coordinates.map((point) => [
-            point[1],
-            point[0],
-          ]);
-
-        setRoute(coordinates);
-      } catch (err) {
-        console.error(err);
-        setError("Could not load the road route.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    getRoute();
-  }, [
-    sourcePlace?.latitude,
-    sourcePlace?.longitude,
-    destinationPlace?.latitude,
-    destinationPlace?.longitude,
-    sourceValid,
-    destinationValid,
-  ]);
-
-  if (!sourceValid || !destinationValid) {
-    return null;
-  }
-
-  const center = [
-    Number(sourcePlace.latitude),
-    Number(sourcePlace.longitude),
-  ];
+/**
+ * Props:
+ *  from: place object { place_name, latitude, longitude } or null
+ *  to:   place object or null
+ */
+export default function RouteMap({ from, to }) {
+  const hasCoords = (p) => p && p.latitude != null && p.longitude != null;
+  const start = hasCoords(from) ? [from.latitude, from.longitude] : null;
+  const end = hasCoords(to) ? [to.latitude, to.longitude] : null;
+  const points = [start, end].filter(Boolean);
 
   return (
-    <div style={{ marginTop: "1rem" }}>
-      {loading && (
-        <p className="card-meta">
-          Loading road route...
+    <div>
+      {start && end && (
+        <p style={{ margin: "0 0 8px" }}>
+          {from.place_name} to {to.place_name}: about{" "}
+          {haversineKm(start, end).toFixed(1)} km in a straight line
         </p>
       )}
-
-      {error && (
-        <p className="msg-error">
-          {error}
-        </p>
-      )}
-
       <MapContainer
-        center={center}
+        center={[18.5204, 73.8567]}
         zoom={12}
-        style={{
-          height: "400px",
-          width: "100%",
-          borderRadius: "10px",
-        }}
+        style={{ height: 350, width: "100%", borderRadius: 8 }}
       >
         <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
         />
-
-        <Marker
-          position={[
-            Number(sourcePlace.latitude),
-            Number(sourcePlace.longitude),
-          ]}
-          icon={placeIcon}
-        >
-          <Popup>
-            <strong>From</strong>
-            <br />
-            {sourcePlace.place_name}
-          </Popup>
-        </Marker>
-
-        <Marker
-          position={[
-            Number(destinationPlace.latitude),
-            Number(destinationPlace.longitude),
-          ]}
-          icon={placeIcon}
-        >
-          <Popup>
-            <strong>To</strong>
-            <br />
-            {destinationPlace.place_name}
-          </Popup>
-        </Marker>
-
-        {route.length > 0 && (
-          <>
-            <Polyline
-              positions={route}
-              pathOptions={{
-                weight: 5,
-              }}
-            />
-
-            <FitRoute route={route} />
-          </>
+        <FitBounds points={points} />
+        {start && (
+          <Marker position={start}>
+            <Popup>From: {from.place_name}</Popup>
+          </Marker>
         )}
+        {end && (
+          <Marker position={end}>
+            <Popup>To: {to.place_name}</Popup>
+          </Marker>
+        )}
+        {start && end && <Polyline positions={[start, end]} weight={4} />}
       </MapContainer>
     </div>
   );

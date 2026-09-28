@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getRides, getBookings, getPlaces } from "../api/client";
 import { getCurrentUserId, isLoggedIn } from "../utils/auth";
+import ShareLocationToggle from "../components/ShareLocationToggle";
+import RideMap from "../components/RideMap";
 
 export default function MyRides() {
   const navigate = useNavigate();
@@ -13,6 +15,7 @@ export default function MyRides() {
   const [error, setError] = useState("");
 
   const placeName = (id) => places.find((p) => p.place_id === id)?.place_name || `Place ${id}`;
+  const placeObj = (id) => places.find((p) => p.place_id === id) || null;
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -92,6 +95,13 @@ export default function MyRides() {
                   ))}
                 </ul>
               )}
+
+              <ShareLocationToggle rideId={ride.ride_id} />
+              <RideMap
+                rideId={ride.ride_id}
+                sourcePlace={placeObj(ride.source_place_id)}
+                destinationPlace={placeObj(ride.destination_place_id)}
+              />
             </div>
           );
         })

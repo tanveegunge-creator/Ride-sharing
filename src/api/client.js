@@ -74,4 +74,19 @@ export const rejectBooking = (bookingId, approverBookingId) =>
     approver_booking_id: approverBookingId,
   });
 
+// ================= PLACES: coordinates =================
+export const updatePlaceLocation = (placeId, latitude, longitude) =>
+  client.patch(`/places/${placeId}/location`, { latitude, longitude });
+
+// ================= LIVE RIDE TRACKING =================
+export const updateRideLocation = (rideId, latitude, longitude) =>
+  client.put(`/rides/${rideId}/location`, { latitude, longitude });
+
+export const getRideLocation = (rideId) =>
+  client.get(`/rides/${rideId}/location`);
+
+// Backend base URL as a ws(s):// URL, derived from BASE_URL so you don't
+// have to keep a second env var in sync with it.
+export const WS_BASE_URL = BASE_URL.replace(/^http/, "ws");
+
 export default client;

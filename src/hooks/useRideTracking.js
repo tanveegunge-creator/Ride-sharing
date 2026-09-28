@@ -1,19 +1,25 @@
-// useRideTracking.js
-//
-// Gets the driver's location for a ride two ways:
-//   1. An initial REST GET, so there's something to show immediately
-//      (and so it still works if the WebSocket fails to connect).
-//   2. A WebSocket subscription for live updates after that.
-//
-// Used by both the driver's ShareLocationToggle (to know if it's already
-// connected) and the passenger's RideMap (to receive live position pushes).
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
-import { useEffect, useRef, useState } from "react";
-import { getRideLocation, updateRideLocation, WS_BASE_URL } from "../api/client";
+import {
+  getRideLocation,
+  updateRideLocation,
+  WS_BASE_URL,
+} from "../api/client";
 
 export function useRideTracking(rideId) {
-  const [location, setLocation] = useState(null); // { latitude, longitude }
-  const [connected, setConnected] = useState(false);
+  const [location, setLocation] =
+    useState(null);
+
+  const [locationHistory, setLocationHistory] =
+    useState([]);
+
+  const [connected, setConnected] =
+    useState(false);
+
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -21,38 +27,128 @@ export function useRideTracking(rideId) {
 
     let cancelled = false;
 
-    // 1. Initial value via REST — ignore a 404 (no one has shared a
-    // location for this ride yet), that's an expected state, not an error.
+    setLocation(null);
+    setLocationHistory([]);
+
+    // Initial REST location
     getRideLocation(rideId)
       .then((res) => {
-        if (!cancelled) setLocation(res.data);
+        if (cancelled) return;
+
+        const data = res.data;
+
+        setLocation(data);
+
+        setLocationHistory([
+          {
+            latitude: Number(data.latitude),
+            longitude: Number(data.longitude),
+          },
+        ]);
       })
       .catch(() => {});
 
-    // 2. Live updates via WebSocket
-    const ws = new WebSocket(`${WS_BASE_URL}/rides/ws/${rideId}/track`);
+    // WebSocket
+    const ws = new WebSocket(
+      `${WS_BASE_URL}/rides/ws/${rideId}/track`
+    );
+
     socketRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onerror = (err) => console.error("Tracking socket error:", err);
-    ws.onmessage = (event) => setLocation(JSON.parse(event.data));
+    ws.onopen = () => {
+      if (!cancelled) {
+        setConnected(true);
+      }
+    };
+
+    ws.onclose = () => {
+      if (!cancelled) {
+        setConnected(false);
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error(
+        "Tracking socket error:",
+        err
+      );
+    };
+
+    ws.onmessage = (event) => {
+      if (cancelled) return;
+
+      try {
+        const data = JSON.parse(event.data);
+
+        setLocation(data);
+
+        setLocationHistory((previous) => {
+          const nextPoint = {
+            latitude: Number(data.latitude),
+            longitude: Number(data.longitude),
+          };
+
+          // Don't add exactly identical consecutive points
+          if (previous.length > 0) {
+            const last =
+              previous[previous.length - 1];
+
+            if (
+              last.latitude ===
+                nextPoint.latitude &&
+              last.longitude ===
+                nextPoint.longitude
+            ) {
+              return previous;
+            }
+          }
+
+          return [
+            ...previous,
+            nextPoint,
+          ];
+        });
+      } catch (err) {
+        console.error(
+          "Invalid tracking data:",
+          err
+        );
+      }
+    };
 
     return () => {
       cancelled = true;
-      ws.close();
+
+      setConnected(false);
+
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
     };
   }, [rideId]);
 
-  return { location, connected };
+  return {
+    location,
+    locationHistory,
+    connected,
+  };
 }
 
-// Separate from the hook above: called by the driver's side to push a new
-// position. This is a plain REST call (not sent over the WebSocket) — the
-// backend persists it and rebroadcasts to anyone subscribed via the hook
-// above.
-export function pushRideLocation(rideId, latitude, longitude) {
-  return updateRideLocation(rideId, latitude, longitude).catch((err) =>
-    console.error("Failed to push location:", err)
-  );
+
+// Driver uses this to send GPS location
+export function pushRideLocation(
+  rideId,
+  latitude,
+  longitude
+) {
+  return updateRideLocation(
+    rideId,
+    latitude,
+    longitude
+  ).catch((err) => {
+    console.error(
+      "Failed to push location:",
+      err
+    );
+  });
 }

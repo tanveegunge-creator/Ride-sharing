@@ -1,15 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getBookings, getRides, getPlaces } from "../api/client";
 import { getCurrentUserId, isLoggedIn } from "../utils/auth";
 import RideMap from "../components/RideMap";
-
-const statusColor = {
-  approved: "#4a4",
-  pending: "#c90",
-  rejected: "#c44",
-  cancelled: "#888",
-};
+import BookingDriverAndPayment from "../components/BookingDriverAndPayment";
 
 export default function MyBookings() {
   const navigate = useNavigate();
@@ -24,76 +18,109 @@ export default function MyBookings() {
   const placeObj = (id) => places.find((p) => p.place_id === id) || null;
   const rideFor = (rideId) => rides.find((r) => r.ride_id === rideId);
 
+  const load = useCallback(() => {
+    const myUserId = getCurrentUserId();
+    if (!myUserId) {
+      setError("Could not identify your account — please log in again.");
+      setLoading(false);
+      return Promise.resolve();
+    }
+
+    return Promise.all([getBookings(), getRides(), getPlaces()])
+      .then(([bookingsRes, ridesRes, placesRes]) => {
+        setMyBookings(bookingsRes.data.filter((b) => b.passenger_id === myUserId));
+        setRides(ridesRes.data);
+        setPlaces(placesRes.data);
+        setError("");
+      })
+      .catch(() => setError("Could not load your bookings. Is the backend running?"))
+      .finally(() => setLoading(false));
+  }, []);
+
   useEffect(() => {
     if (!isLoggedIn()) {
       navigate("/login");
       return;
     }
-    const myUserId = getCurrentUserId();
-    if (!myUserId) {
-      setError("Could not identify your account — please log in again.");
-      setLoading(false);
-      return;
-    }
+    load();
+  }, [navigate, load]);
 
-    Promise.all([getBookings(), getRides(), getPlaces()])
-      .then(([bookingsRes, ridesRes, placesRes]) => {
-        setMyBookings(bookingsRes.data.filter((b) => b.passenger_id === myUserId));
-        setRides(ridesRes.data);
-        setPlaces(placesRes.data);
-      })
-      .catch(() => setError("Could not load your bookings. Is the backend running?"))
-      .finally(() => setLoading(false));
-  }, [navigate]);
+  // Quiet refresh so approvals, ride start/end and payments show up.
+  useEffect(() => {
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [load]);
 
-  if (loading) return <p style={{ padding: "2rem" }}>Loading...</p>;
+  if (loading) return <div className="page"><p>Loading...</p></div>;
 
   return (
-    <div style={{ maxWidth: 700, margin: "2rem auto", padding: "1rem" }}>
-      <h2>My Bookings</h2>
+    <div className="page page-wide">
+      <h2>My bookings</h2>
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p className="msg-error">{error}</p>}
 
       {myBookings.length === 0 ? (
-        <p>You haven't booked any rides yet.</p>
+        <p className="empty-state">You haven't booked any rides yet.</p>
       ) : (
         myBookings.map((booking) => {
           const ride = rideFor(booking.ride_id);
+          const closed = ride && (ride.status === "completed" || ride.status === "stopped_early");
+
           return (
-            <div
-              key={booking.booking_id}
-              style={{ border: "1px solid #444", borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}
-            >
+            <div key={booking.booking_id} className="card">
               {ride ? (
-                <p>
-                  <strong>{placeName(ride.source_place_id)} → {placeName(ride.destination_place_id)}</strong>
-                  {" "}({ride.vehicle_type})
-                </p>
+                <div className="route">
+                  <div className="route-line">
+                    <div className="route-dot" />
+                    <div className="route-connector" />
+                    <div className="route-dot end" />
+                  </div>
+                  <div className="route-places">
+                    <span>{placeName(ride.source_place_id)}</span>
+                    <span>{placeName(ride.destination_place_id)}
+                      <span className="sub">
+                        {new Date(ride.departure_time).toLocaleString()} · {ride.vehicle_type}
+                      </span>
+                    </span>
+                  </div>
+                </div>
               ) : (
-                <p><strong>Ride #{booking.ride_id}</strong></p>
+                <h3>Ride #{booking.ride_id}</h3>
               )}
 
-              {ride && <p>Departure: {new Date(ride.departure_time).toLocaleString()}</p>}
-              <p>Seats booked: {booking.seats_booked}</p>
+              <p className="card-meta">Seats booked: {booking.seats_booked}</p>
 
               <p>
-                Status:{" "}
-                <span style={{ color: statusColor[booking.status] || "#ccc", fontWeight: "bold" }}>
+                <span className={`status ${booking.status}`}>
+                  <span className="status-dot" />
                   {booking.status}
                 </span>
               </p>
 
-              {booking.status === "approved" && booking.fare_share != null && (
-                <p>Your share of the fare: ₹{booking.fare_share}</p>
+              {booking.status === "approved" && !closed && booking.fare_share != null && (
+                <p className="card-price">
+                  ₹{booking.fare_share}
+                  <span className="card-price-sub">your share of the fare</span>
+                </p>
               )}
               {booking.status === "pending" && (
-                <p style={{ color: "#c90" }}>Waiting on approval from existing passengers.</p>
+                <p className="card-meta" style={{ color: "var(--warning)" }}>
+                  Waiting on approval from existing passengers.
+                </p>
               )}
               {booking.status === "rejected" && (
-                <p style={{ color: "#c44" }}>This request was declined.</p>
+                <p className="msg-error">This request was declined.</p>
+              )}
+              {booking.status === "cancelled" && (
+                <p className="card-meta">
+                  This request was cancelled because the ride started before it was approved.
+                </p>
               )}
 
-              {booking.status === "approved" && ride && (
+              {/* Driver name / vehicle number / phone + payment (cash or online QR) */}
+              <BookingDriverAndPayment booking={booking} />
+
+              {booking.status === "approved" && ride && !closed && (
                 <RideMap
                   rideId={ride.ride_id}
                   sourcePlace={placeObj(ride.source_place_id)}

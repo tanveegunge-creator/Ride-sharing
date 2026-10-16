@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from .database import engine, Base
 from . import models
 from .routes import (
@@ -9,31 +10,37 @@ from .routes import (
     auth,
     places,
     roads,
-    tracking
+    tracking,
 )
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Ride Sharing API",
     description="Ride Sharing System using FastAPI and PostgreSQL",
-    version="1.0"
+    version="1.0",
 )
 
+# Allow the local React frontend and deployed frontend to access the API.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://ride-sharing-frontend.onrender.com",
-        "https://localhost:5173",
         "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:5173",
-        "https://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "https://ride-sharing-frontend.onrender.com",
     ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Create database tables using your existing models.
+Base.metadata.create_all(bind=engine)
+
+# Register all application routes.
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(rides.router)

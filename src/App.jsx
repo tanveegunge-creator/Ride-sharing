@@ -49,14 +49,65 @@ function Navbar() {
 function Home() {
   const loggedIn = useAuthStatus();
   return (
-    <div className="page">
-      <h1>Get where you're going, split the way there.</h1>
-      <p className="page-lead">
-        {loggedIn
-          ? "Find a ride, offer one, or check on your current bookings from the menu above."
-          : "Sign up as a driver to offer rides, or a passenger to book a seat on one."}
-      </p>
-    </div>
+    <>
+      <section className="hero">
+        <div className="hero-copy">
+          <span className="eyebrow">Pune · Carpool · Split fares</span>
+          <h1 className="hero-title">
+            Get where you're going,
+            <br />
+            <span className="accent">split the way there.</span>
+          </h1>
+          <p className="hero-lead">
+            Offer a seat or book one. Pick your route on the map, see the fare
+            before you commit, and follow your ride live.
+          </p>
+          <div className="hero-cta">
+            {loggedIn ? (
+              <>
+                <Link className="btn btn-lg" to="/book">Find a ride</Link>
+                <Link className="btn btn-secondary btn-lg" to="/create-ride">Offer a ride</Link>
+              </>
+            ) : (
+              <>
+                <Link className="btn btn-lg" to="/signup">Get started</Link>
+                <Link className="btn btn-secondary btn-lg" to="/login">Log in</Link>
+              </>
+            )}
+          </div>
+        </div>
+
+        <svg className="hero-art" viewBox="0 0 320 220" aria-hidden="true">
+          <path id="trip" d="M40 170 C 100 20, 220 220, 280 50"
+                fill="none" stroke="#2c3459" strokeWidth="3" strokeDasharray="6 8" />
+          <circle cx="40" cy="170" r="9" fill="#4caf6d" />
+          <circle cx="280" cy="50" r="9" fill="#e8624a" />
+          <circle r="7" fill="#e8a33d">
+            <animateMotion dur="5s" repeatCount="indefinite">
+              <mpath href="#trip" />
+            </animateMotion>
+          </circle>
+        </svg>
+      </section>
+
+      <section className="steps">
+        <div className="step">
+          <span className="step-num">1</span>
+          <h3>Pick on the map</h3>
+          <p>Tap a start and a destination. The route and fare appear instantly.</p>
+        </div>
+        <div className="step">
+          <span className="step-num">2</span>
+          <h3>Share the ride</h3>
+          <p>Fares split automatically between approved riders.</p>
+        </div>
+        <div className="step">
+          <span className="step-num">3</span>
+          <h3>Track it live</h3>
+          <p>Follow the driver on the map in real time.</p>
+        </div>
+      </section>
+    </>
   );
 }
 

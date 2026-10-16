@@ -1,8 +1,13 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime
+from urllib.parse import quote
 from . import models, schemas
 from .auth import hash_password, verify_password
+
+
+RIDE_OPEN_STATUSES = ("available", "Full")
+RIDE_CLOSED_STATUSES = ("completed", "stopped_early")
 
 
 # ================= USERS =================
@@ -56,6 +61,17 @@ def create_ride(db: Session, ride: schemas.RideCreate):
     if ride.total_seats <= 0:
         raise HTTPException(status_code=400, detail="total_seats must be greater than 0")
 
+    vehicle_number = (ride.vehicle_number or "").strip().upper()
+    if not vehicle_number:
+        raise HTTPException(status_code=400, detail="Vehicle number is required")
+
+    upi_id = (ride.upi_id or "").strip() or None
+    if upi_id and "@" not in upi_id:
+        raise HTTPException(
+            status_code=400,
+            detail="UPI ID looks invalid (expected something like name@bank)"
+        )
+
     route = find_shortest_path(db, ride.source_place_id, ride.destination_place_id)
     if not route["path"]:
         raise HTTPException(
@@ -72,7 +88,9 @@ def create_ride(db: Session, ride: schemas.RideCreate):
         vehicle_type=ride.vehicle_type,
         total_seats=ride.total_seats,
         available_seats=ride.total_seats,
-        price=calculated_price
+        price=calculated_price,
+        vehicle_number=vehicle_number,
+        upi_id=upi_id,
     )
     db.add(db_ride)
     db.commit()
@@ -115,6 +133,9 @@ def create_booking(db: Session, booking: schemas.BookingCreate):
     ride = db.query(models.Ride).filter(models.Ride.ride_id == booking.ride_id).first()
     if ride is None:
         raise HTTPException(status_code=404, detail="Ride not found")
+
+    if (ride.status or "available") not in RIDE_OPEN_STATUSES:
+        raise HTTPException(status_code=400, detail="This ride is no longer open for booking")
 
     passenger = db.query(models.User).filter(models.User.id == booking.passenger_id).first()
     if passenger is None:
@@ -252,6 +273,204 @@ def decide_booking_approval(db: Session, booking_id: int, approver_booking_id: i
     return booking
 
 
+# ================= RIDE LIFECYCLE: START / END (incl. stopped midway) =================
+def _get_ride_for_driver(db: Session, ride_id: int, driver_id: int):
+    ride = get_ride(db, ride_id)
+    if ride.driver_id != driver_id:
+        raise HTTPException(status_code=403, detail="Only this ride's driver can do that")
+    return ride
+
+
+def _approved_bookings(db: Session, ride_id: int):
+    return (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.ride_id == ride_id,
+            models.Booking.status == models.BookingStatus.APPROVED
+        )
+        .all()
+    )
+
+
+def start_ride(db: Session, ride_id: int, driver_id: int):
+    ride = _get_ride_for_driver(db, ride_id, driver_id)
+
+    if (ride.status or "available") not in RIDE_OPEN_STATUSES:
+        raise HTTPException(status_code=400, detail="This ride has already started or ended")
+
+    if not _approved_bookings(db, ride_id):
+        raise HTTPException(status_code=400, detail="No confirmed passengers yet - nobody to pick up")
+
+    # Requests still waiting for passenger approval can't be honoured once the ride is moving.
+    pending = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.ride_id == ride_id,
+            models.Booking.status == models.BookingStatus.PENDING
+        )
+        .all()
+    )
+    for b in pending:
+        b.status = models.BookingStatus.CANCELLED
+        _release_seats(ride, b.seats_booked)
+
+    ride.status = "ongoing"
+    ride.started_at = datetime.utcnow()
+    db.commit()
+    db.refresh(ride)
+    return ride
+
+
+def end_ride(db: Session, ride_id: int, driver_id: int, stopped_place_id):
+    ride = _get_ride_for_driver(db, ride_id, driver_id)
+
+    if ride.status != "ongoing":
+        raise HTTPException(status_code=400, detail="Only a ride that is in progress can be ended")
+
+    stopped_early = (
+        stopped_place_id is not None and stopped_place_id != ride.destination_place_id
+    )
+    final_price = float(ride.price)
+
+    if stopped_early:
+        if stopped_place_id == ride.source_place_id:
+            raise HTTPException(status_code=400, detail="The ride can't stop at its own starting point")
+
+        place = db.query(models.Place).filter(models.Place.place_id == stopped_place_id).first()
+        if place is None:
+            raise HTTPException(status_code=404, detail="Stop place not found")
+
+        full_route = find_shortest_path(db, ride.source_place_id, ride.destination_place_id)
+        to_stop = find_shortest_path(db, ride.source_place_id, stopped_place_id)
+        from_stop = find_shortest_path(db, stopped_place_id, ride.destination_place_id)
+
+        if not full_route["path"] or not to_stop["path"] or not from_stop["path"]:
+            raise HTTPException(status_code=400, detail="No road route through that place")
+
+        full_d = full_route["distance"]
+        d_to_stop = to_stop["distance"]
+        d_from_stop = from_stop["distance"]
+
+        # The stop must lie on the ride's shortest route.
+        if d_to_stop + d_from_stop != full_d:
+            raise HTTPException(status_code=400, detail="That place isn't on this ride's route")
+
+        ratio = (d_to_stop / full_d) if full_d else 1
+        final_price = round(float(ride.price) * ratio, 2)
+
+    approved = _approved_bookings(db, ride_id)
+    if approved:
+        share = round(final_price / len(approved), 2)
+        for b in approved:
+            b.final_fare = share
+
+    ride.status = "stopped_early" if stopped_early else "completed"
+    ride.stopped_place_id = stopped_place_id if stopped_early else None
+    ride.final_price = final_price
+    ride.ended_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(ride)
+    return ride
+
+
+def list_ride_bookings(db: Session, ride_id: int, driver_id: int):
+    _get_ride_for_driver(db, ride_id, driver_id)
+    return (
+        db.query(models.Booking)
+        .filter(models.Booking.ride_id == ride_id)
+        .order_by(models.Booking.booking_id)
+        .all()
+    )
+
+
+# ================= PAYMENTS =================
+def _check_payable(booking: models.Booking):
+    ride = booking.ride
+    if ride.status not in RIDE_CLOSED_STATUSES:
+        raise HTTPException(status_code=400, detail="Payment opens once the ride has ended")
+    if booking.status != models.BookingStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="Only confirmed bookings can be paid")
+
+
+def pay_booking(db: Session, booking_id: int, passenger_id: int, method):
+    booking = get_booking(db, booking_id)
+    if booking.passenger_id != passenger_id:
+        raise HTTPException(status_code=403, detail="This is not your booking")
+
+    _check_payable(booking)
+
+    if booking.payment_status == "paid":
+        raise HTTPException(status_code=400, detail="This booking is already paid")
+
+    method = getattr(method, "value", method)
+    if method == "online" and not booking.ride.upi_id:
+        raise HTTPException(
+            status_code=400,
+            detail="The driver hasn't added a UPI ID - please choose cash"
+        )
+
+    booking.payment_method = method
+    booking.payment_status = "awaiting_confirmation"
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+def get_payment_info(db: Session, booking_id: int, passenger_id: int):
+    booking = get_booking(db, booking_id)
+    if booking.passenger_id != passenger_id:
+        raise HTTPException(status_code=403, detail="This is not your booking")
+
+    _check_payable(booking)
+
+    ride = booking.ride
+    if not ride.upi_id:
+        raise HTTPException(
+            status_code=400,
+            detail="The driver hasn't added a UPI ID - please choose cash"
+        )
+
+    fare = booking.final_fare if booking.final_fare is not None else booking.fare_share
+    amount = round(float(fare or 0), 2)
+    payee = ride.driver.name if ride.driver else "Driver"
+    note = f"Ride {ride.ride_id}"
+
+    upi_link = (
+        f"upi://pay?pa={quote(ride.upi_id, safe='@.-_')}"
+        f"&pn={quote(payee)}"
+        f"&am={amount:.2f}"
+        f"&cu=INR"
+        f"&tn={quote(note)}"
+    )
+    return {
+        "amount": amount,
+        "upi_id": ride.upi_id,
+        "payee_name": payee,
+        "upi_link": upi_link,
+        "note": note,
+    }
+
+
+def confirm_payment(db: Session, booking_id: int, driver_id: int):
+    booking = get_booking(db, booking_id)
+    if booking.ride.driver_id != driver_id:
+        raise HTTPException(status_code=403, detail="Only this ride's driver can confirm payment")
+
+    _check_payable(booking)
+
+    if booking.payment_status == "paid":
+        return booking
+
+    if booking.payment_method is None:
+        booking.payment_method = "cash"
+    booking.payment_status = "paid"
+    booking.paid_at = datetime.utcnow()
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
 # ================= PLACES =================
 def create_place(db: Session, place: schemas.PlaceCreate):
     db_place = models.Place(
@@ -270,7 +489,7 @@ def get_all_places(db: Session):
 
 
 def update_place_location(db: Session, place_id: int, location: schemas.PlaceLocationUpdate):
-    """Backfill/update coordinates on an existing place (e.g. one created before this feature)."""
+    """Backfill/update coordinates on an existing place."""
     place = db.query(models.Place).filter(models.Place.place_id == place_id).first()
     if place is None:
         raise HTTPException(status_code=404, detail="Place not found")
@@ -286,6 +505,9 @@ def update_ride_location(db: Session, ride_id: int, location: schemas.RideLocati
     ride = db.query(models.Ride).filter(models.Ride.ride_id == ride_id).first()
     if ride is None:
         raise HTTPException(status_code=404, detail="Ride not found")
+
+    if ride.status in RIDE_CLOSED_STATUSES:
+        raise HTTPException(status_code=400, detail="This ride has ended - tracking has stopped")
 
     row = db.query(models.RideLocation).filter(models.RideLocation.ride_id == ride_id).first()
     if row is None:

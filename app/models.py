@@ -53,9 +53,6 @@ class Place(Base):
     place_id = Column(Integer, primary_key=True, index=True)
     place_name = Column(String(100), unique=True, nullable=False)
 
-    # Nullable: existing places won't have these until backfilled via
-    # PATCH /places/{place_id}/location. A place with no coordinates
-    # simply isn't drawn on the map.
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
 
@@ -95,12 +92,27 @@ class Ride(Base):
     available_seats = Column(Integer, nullable=False)
 
     price = Column(Numeric(10, 2), nullable=False)
+    # available | Full | ongoing | completed | stopped_early
     status = Column(String(20), default="available")
+
+    # --- vehicle / payment details ---
+    vehicle_number = Column(String(20), nullable=True)
+    upi_id = Column(String(60), nullable=True)
+
+    # --- ride lifecycle ---
+    started_at = Column(TIMESTAMP, nullable=True)
+    ended_at = Column(TIMESTAMP, nullable=True)
+    stopped_place_id = Column(Integer, ForeignKey("places.place_id"), nullable=True)
+    final_price = Column(Numeric(10, 2), nullable=True)
 
     driver = relationship("User", back_populates="rides")
     bookings = relationship("Booking", back_populates="ride")
     source_place = relationship("Place", foreign_keys=[source_place_id], back_populates="source_rides")
     destination_place = relationship("Place", foreign_keys=[destination_place_id], back_populates="destination_rides")
+
+    @property
+    def driver_name(self):
+        return self.driver.name if self.driver else None
 
 
 # ================= BOOKINGS =================
@@ -116,10 +128,48 @@ class Booking(Base):
     fare_share = Column(Numeric(10, 2), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
+    # --- set when the ride ends (reduced if the ride stopped early) ---
+    final_fare = Column(Numeric(10, 2), nullable=True)
+
+    # --- payment: unpaid | awaiting_confirmation | paid ---
+    payment_method = Column(String(10), nullable=True)          # cash | online
+    payment_status = Column(String(20), nullable=False, default="unpaid", server_default="unpaid")
+    paid_at = Column(TIMESTAMP, nullable=True)
+
     ride = relationship("Ride", back_populates="bookings")
     passenger = relationship("User", back_populates="bookings")
     approvals = relationship("BookingApproval", back_populates="booking",
                               foreign_keys="BookingApproval.booking_id")
+
+    # --- read-only helpers exposed through the response schemas ---
+    @property
+    def ride_status(self):
+        return self.ride.status if self.ride else None
+
+    @property
+    def vehicle_number(self):
+        return self.ride.vehicle_number if self.ride else None
+
+    @property
+    def driver_name(self):
+        return self.ride.driver.name if self.ride and self.ride.driver else None
+
+    @property
+    def driver_phone(self):
+        # Contact number is only revealed once the booking is approved.
+        if self.status == BookingStatus.APPROVED and self.ride and self.ride.driver:
+            return self.ride.driver.phone
+        return None
+
+    @property
+    def passenger_name(self):
+        return self.passenger.name if self.passenger else None
+
+    @property
+    def passenger_phone(self):
+        if self.status == BookingStatus.APPROVED and self.passenger:
+            return self.passenger.phone
+        return None
 
 
 # ================= BOOKING APPROVALS =================
@@ -144,9 +194,7 @@ class BookingApproval(Base):
 class RideLocation(Base):
     """
     One row per ride, overwritten on every update from the driver's device.
-    This is the 'last known position' — used both as the initial value a
-    passenger sees before the WebSocket connects, and as a fallback if they
-    reconnect later (e.g. after a phone locks and drops the socket).
+    This is the 'last known position'.
     """
     __tablename__ = "ride_locations"
 

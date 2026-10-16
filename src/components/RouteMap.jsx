@@ -1,17 +1,8 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
-import { useEffect } from "react";
-
-L.Marker.prototype.options.icon = L.icon({
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-});
+import { useEffect, useMemo, useState } from "react";
+import { pin, COLORS, TILES } from "../utils/mapIcons";
 
 function FitBounds({ points }) {
   const map = useMap();
@@ -25,57 +16,81 @@ function FitBounds({ points }) {
   return null;
 }
 
-// Straight-line distance in km between two [lat, lng] points
-function haversineKm([lat1, lon1], [lat2, lon2]) {
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * 6371 * Math.asin(Math.sqrt(a));
-}
-
 /**
- * Props:
- *  from: place object { place_name, latitude, longitude } or null
- *  to:   place object or null
+ * Props: sourcePlace, destinationPlace  ({ place_name, latitude, longitude })
  */
-export default function RouteMap({ from, to }) {
-  const hasCoords = (p) => p && p.latitude != null && p.longitude != null;
-  const start = hasCoords(from) ? [from.latitude, from.longitude] : null;
-  const end = hasCoords(to) ? [to.latitude, to.longitude] : null;
-  const points = [start, end].filter(Boolean);
+export default function RouteMap({ sourcePlace, destinationPlace }) {
+  const sLat = sourcePlace?.latitude;
+  const sLng = sourcePlace?.longitude;
+  const eLat = destinationPlace?.latitude;
+  const eLng = destinationPlace?.longitude;
+
+  const start = sLat != null && sLng != null ? [Number(sLat), Number(sLng)] : null;
+  const end = eLat != null && eLng != null ? [Number(eLat), Number(eLng)] : null;
+
+  const points = useMemo(
+    () => [start, end].filter(Boolean),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sLat, sLng, eLat, eLng]
+  );
+
+  const [road, setRoad] = useState(null); // { coords, km, min }
+
+  useEffect(() => {
+    setRoad(null);
+    if (!start || !end) return;
+    const ctrl = new AbortController();
+    const url =
+      `https://router.project-osrm.org/route/v1/driving/` +
+      `${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson`;
+    fetch(url, { signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((d) => {
+        const r0 = d.routes && d.routes[0];
+        if (r0) {
+          setRoad({
+            coords: r0.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+            km: r0.distance / 1000,
+            min: r0.duration / 60,
+          });
+        }
+      })
+      .catch(() => {}); // fall back to the straight line
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sLat, sLng, eLat, eLng]);
 
   return (
     <div>
-      {start && end && (
-        <p style={{ margin: "0 0 8px" }}>
-          {from.place_name} to {to.place_name}: about{" "}
-          {haversineKm(start, end).toFixed(1)} km in a straight line
-        </p>
+      {road && (
+        <div className="pick-summary">
+          <span className="pick-chip">🛣️ <strong>{road.km.toFixed(1)} km</strong></span>
+          <span className="pick-chip">⏱️ <strong>~{Math.round(road.min)} min</strong></span>
+        </div>
       )}
       <MapContainer
         center={[18.5204, 73.8567]}
         zoom={12}
-        style={{ height: 350, width: "100%", borderRadius: 8 }}
+        style={{ height: 350, width: "100%", borderRadius: 12 }}
       >
-        <TileLayer
-          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution="&copy; OpenStreetMap contributors"
-        />
+        <TileLayer {...TILES} />
         <FitBounds points={points} />
         {start && (
-          <Marker position={start}>
-            <Popup>From: {from.place_name}</Popup>
+          <Marker position={start} icon={pin(COLORS.from)}>
+            <Popup>From: {sourcePlace.place_name}</Popup>
           </Marker>
         )}
         {end && (
-          <Marker position={end}>
-            <Popup>To: {to.place_name}</Popup>
+          <Marker position={end} icon={pin(COLORS.to)}>
+            <Popup>To: {destinationPlace.place_name}</Popup>
           </Marker>
         )}
-        {start && end && <Polyline positions={[start, end]} weight={4} />}
+        {start && end && (
+          <Polyline
+            positions={road ? road.coords : [start, end]}
+            pathOptions={{ color: COLORS.idle, weight: 5, dashArray: road ? null : "8 10" }}
+          />
+        )}
       </MapContainer>
     </div>
   );

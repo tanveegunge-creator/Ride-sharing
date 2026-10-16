@@ -29,6 +29,11 @@ class UserRole(str, enum.Enum):
     PASSENGER = "passenger"
 
 
+class PaymentMethod(str, enum.Enum):
+    CASH = "cash"
+    ONLINE = "online"
+
+
 # ================= USERS =================
 class UserCreate(BaseModel):
     name: str
@@ -42,7 +47,7 @@ class UserResponse(BaseModel):
     id: int
     name: str
     email: EmailStr
-    phone: str
+    phone: Optional[str] = None
     role: UserRole
 
     class Config:
@@ -57,6 +62,8 @@ class RideCreate(BaseModel):
     departure_time: datetime
     vehicle_type: VehicleType
     total_seats: int
+    vehicle_number: str
+    upi_id: Optional[str] = None
 
 
 class RideResponse(BaseModel):
@@ -70,9 +77,25 @@ class RideResponse(BaseModel):
     available_seats: int
     price: float
     status: str
+    vehicle_number: Optional[str] = None
+    driver_name: Optional[str] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    stopped_place_id: Optional[int] = None
+    final_price: Optional[float] = None
 
     class Config:
         from_attributes = True
+
+
+class StartRideRequest(BaseModel):
+    driver_id: int
+
+
+class EndRideRequest(BaseModel):
+    driver_id: int
+    # None (or the destination) = completed normally; any other place = stopped midway
+    stopped_place_id: Optional[int] = None
 
 
 # ================= BOOKINGS =================
@@ -89,6 +112,35 @@ class BookingResponse(BaseModel):
     seats_booked: int
     status: BookingStatus
     fare_share: Optional[float] = None
+
+    # ride end / payment
+    final_fare: Optional[float] = None
+    payment_method: Optional[str] = None
+    payment_status: str = "unpaid"
+    paid_at: Optional[datetime] = None
+
+    # driver details (phone only when the booking is approved)
+    ride_status: Optional[str] = None
+    vehicle_number: Optional[str] = None
+    driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RideBookingResponse(BaseModel):
+    """What a driver sees for each booking on their own ride."""
+    booking_id: int
+    passenger_id: int
+    passenger_name: Optional[str] = None
+    passenger_phone: Optional[str] = None
+    seats_booked: int
+    status: BookingStatus
+    fare_share: Optional[float] = None
+    final_fare: Optional[float] = None
+    payment_method: Optional[str] = None
+    payment_status: str = "unpaid"
 
     class Config:
         from_attributes = True
@@ -107,6 +159,24 @@ class BookingApprovalResponse(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     approver_booking_id: int
+
+
+# ================= PAYMENTS =================
+class PayRequest(BaseModel):
+    passenger_id: int
+    method: PaymentMethod
+
+
+class ConfirmPaymentRequest(BaseModel):
+    driver_id: int
+
+
+class PaymentInfo(BaseModel):
+    amount: float
+    upi_id: str
+    payee_name: str
+    upi_link: str
+    note: str
 
 
 # ================= AUTH =================

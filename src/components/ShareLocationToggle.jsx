@@ -1,58 +1,87 @@
-// ShareLocationToggle.jsx — mounted on the driver's own ride card in MyRides.jsx.
-// Watches the browser's GPS and pushes updates while toggled on.
+// RideMap.jsx — shows source/destination place markers plus the driver's
+// live position for a ride. Used on both MyRides.jsx (driver) and
+// MyBookings.jsx (passenger, once approved).
+//
+// SETUP (one-time): npm install leaflet react-leaflet
 
-import { useEffect, useRef, useState } from "react";
-import { pushRideLocation } from "../hooks/useRideTracking";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
+import { useRideTracking } from "../hooks/useRideTracking";
 
-export default function ShareLocationToggle({ rideId }) {
-  const [sharing, setSharing] = useState(false);
-  const [error, setError] = useState("");
-  const watchIdRef = useRef(null);
+// Vite doesn't auto-bundle Leaflet's default marker images, so without
+// this fix markers render as broken image icons.
+const placeIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconAnchor: [12, 41] });
+const driverIcon = L.icon({
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
+  iconAnchor: [12, 41],
+  className: "driver-marker", // hook for CSS if you want to recolor it later
+});
 
-  useEffect(() => {
-    // Stop sharing if the component unmounts (e.g. navigating away)
-    // while it was still on.
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-    };
-  }, []);
+export default function RideMap({ rideId, sourcePlace, destinationPlace }) {
+  const { location, connected } = useRideTracking(rideId);
 
-  const start = () => {
-    setError("");
-    if (!navigator.geolocation) {
-      setError("Geolocation isn't supported by this browser.");
-      return;
-    }
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => pushRideLocation(rideId, pos.coords.latitude, pos.coords.longitude),
-      () => setError("Couldn't get your location — check location permissions."),
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+  const sourceHasCoords = sourcePlace?.latitude != null && sourcePlace?.longitude != null;
+  const destHasCoords = destinationPlace?.latitude != null && destinationPlace?.longitude != null;
+
+  if (!sourceHasCoords && !destHasCoords && !location) {
+    return (
+      <p className="card-meta" style={{ marginTop: "0.6rem" }}>
+        No map data yet — neither place has coordinates set, and the driver hasn't
+        shared a location.
+      </p>
     );
-    setSharing(true);
-  };
+  }
 
-  const stop = () => {
-    if (watchIdRef.current !== null) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-    setSharing(false);
-  };
+  // Center on whatever we actually have: live driver location first,
+  // falling back to source, then destination.
+  const center = location
+    ? [location.latitude, location.longitude]
+    : sourceHasCoords
+    ? [sourcePlace.latitude, sourcePlace.longitude]
+    : [destinationPlace.latitude, destinationPlace.longitude];
 
   return (
     <div style={{ marginTop: "0.8rem" }}>
-      <button
-        type="button"
-        className={sharing ? "btn-secondary" : "btn"}
-        style={{ borderRadius: 6, padding: "0.4rem 0.8rem", cursor: "pointer" }}
-        onClick={sharing ? stop : start}
+      <MapContainer
+        center={center}
+        zoom={13}
+        style={{ height: "320px", width: "100%", borderRadius: 8 }}
       >
-        {sharing ? "Stop sharing location" : "Share live location"}
-      </button>
-      {sharing && <span style={{ marginLeft: "0.6rem", color: "#4a4" }}>● Live</span>}
-      {error && <p className="msg-error" style={{ marginTop: "0.4rem" }}>{error}</p>}
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution="&copy; OpenStreetMap contributors"
+        />
+
+        {sourceHasCoords && (
+          <Marker position={[sourcePlace.latitude, sourcePlace.longitude]} icon={placeIcon}>
+            <Popup>Pickup: {sourcePlace.place_name}</Popup>
+          </Marker>
+        )}
+
+        {destHasCoords && (
+          <Marker position={[destinationPlace.latitude, destinationPlace.longitude]} icon={placeIcon}>
+            <Popup>Drop-off: {destinationPlace.place_name}</Popup>
+          </Marker>
+        )}
+
+        {location && (
+          <Marker position={[location.latitude, location.longitude]} icon={driverIcon}>
+            <Popup>Driver's current location</Popup>
+          </Marker>
+        )}
+      </MapContainer>
+
+      <p className="card-meta" style={{ marginTop: "0.4rem" }}>
+        {location
+          ? connected
+            ? "Live — updating in real time"
+            : "Showing last known location (reconnecting…)"
+          : "Waiting for the driver to start sharing their location."}
+      </p>
     </div>
   );
 }

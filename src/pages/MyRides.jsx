@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getRides, getBookings, getPlaces } from "../api/client";
 import { getCurrentUserId, isLoggedIn } from "../utils/auth";
 import ShareLocationToggle from "../components/ShareLocationToggle";
 import RideMap from "../components/RideMap";
+import DriverRidePanel from "../components/DriverRidePanel";
 
 export default function MyRides() {
   const navigate = useNavigate();
@@ -17,19 +18,15 @@ export default function MyRides() {
   const placeName = (id) => places.find((p) => p.place_id === id)?.place_name || `Place ${id}`;
   const placeObj = (id) => places.find((p) => p.place_id === id) || null;
 
-  useEffect(() => {
-    if (!isLoggedIn()) {
-      navigate("/login");
-      return;
-    }
+  const load = useCallback(() => {
     const myUserId = getCurrentUserId();
     if (!myUserId) {
       setError("Could not identify your account — please log in again.");
       setLoading(false);
-      return;
+      return Promise.resolve();
     }
 
-    Promise.all([getRides(), getBookings(), getPlaces()])
+    return Promise.all([getRides(), getBookings(), getPlaces()])
       .then(([ridesRes, bookingsRes, placesRes]) => {
         const mine = ridesRes.data.filter((r) => r.driver_id === myUserId);
         setMyRides(mine);
@@ -40,10 +37,25 @@ export default function MyRides() {
           grouped[ride.ride_id] = bookingsRes.data.filter((b) => b.ride_id === ride.ride_id);
         }
         setBookingsByRide(grouped);
+        setError("");
       })
       .catch(() => setError("Could not load your rides. Is the backend running?"))
       .finally(() => setLoading(false));
-  }, [navigate]);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn()) {
+      navigate("/login");
+      return;
+    }
+    load();
+  }, [navigate, load]);
+
+  // Quiet refresh so new booking requests / status changes show up.
+  useEffect(() => {
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [load]);
 
   if (loading) return <div className="page"><p>Loading...</p></div>;
 
@@ -57,7 +69,14 @@ export default function MyRides() {
         <p className="empty-state">You haven't created any rides yet.</p>
       ) : (
         myRides.map((ride) => {
-          const passengers = bookingsByRide[ride.ride_id] || [];
+          // Approved passengers are listed (with names + payments) inside DriverRidePanel;
+          // here we only list requests that are still waiting or didn't go through.
+          const others = (bookingsByRide[ride.ride_id] || []).filter(
+            (b) => b.status !== "approved"
+          );
+          const closed = ride.status === "completed" || ride.status === "stopped_early";
+          const ongoing = ride.status === "ongoing";
+
           return (
             <div key={ride.ride_id} className="card">
               <div className="route">
@@ -75,33 +94,42 @@ export default function MyRides() {
               </div>
 
               <p className="card-meta">
-                {ride.total_seats - ride.available_seats}/{ride.total_seats} seats filled · {ride.status}
+                {ride.total_seats - ride.available_seats}/{ride.total_seats} seats filled
+                {ride.vehicle_number ? ` · ${ride.vehicle_number}` : ""}
               </p>
-              <p className="card-price">₹{ride.price}<span className="card-price-sub">total fare</span></p>
+              <p className="card-price">
+                ₹{closed && ride.final_price != null ? ride.final_price : ride.price}
+                <span className="card-price-sub">
+                  {ride.status === "stopped_early" ? "final fare (ended early)" : "total fare"}
+                </span>
+              </p>
 
-              {passengers.length === 0 ? (
-                <p className="card-meta" style={{ marginTop: "0.8rem" }}>No bookings yet.</p>
-              ) : (
+              {/* Start / End ride, passenger list, payment confirmation */}
+              <DriverRidePanel ride={ride} places={places} onChange={load} />
+
+              {others.length > 0 && (
                 <ul className="passenger-list">
-                  {passengers.map((b) => (
+                  {others.map((b) => (
                     <li key={b.booking_id}>
                       <span>Passenger #{b.passenger_id} · {b.seats_booked} seat(s)</span>
                       <span className={`status ${b.status}`}>
                         <span className="status-dot" />
                         {b.status}
-                        {b.status === "approved" && b.fare_share != null && ` · ₹${b.fare_share}`}
                       </span>
                     </li>
                   ))}
                 </ul>
               )}
 
-              <ShareLocationToggle rideId={ride.ride_id} />
-              <RideMap
-                rideId={ride.ride_id}
-                sourcePlace={placeObj(ride.source_place_id)}
-                destinationPlace={placeObj(ride.destination_place_id)}
-              />
+              {/* Location sharing only makes sense while the ride is in progress */}
+              {ongoing && <ShareLocationToggle rideId={ride.ride_id} />}
+              {!closed && (
+                <RideMap
+                  rideId={ride.ride_id}
+                  sourcePlace={placeObj(ride.source_place_id)}
+                  destinationPlace={placeObj(ride.destination_place_id)}
+                />
+              )}
             </div>
           );
         })

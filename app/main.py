@@ -25,15 +25,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi.middleware.cors import CORSMiddleware
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://ride-sharing-frontend-q35l6bpr4-t5-f6cf.vercel.app",
+        "https://ride-sharing-frontend-opv1x6yxa-t5-f6cf.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 # Create database tables using your existing models.

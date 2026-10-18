@@ -20,15 +20,20 @@ app = FastAPI(
 )
 
 # Allow the local React frontend and deployed frontend to access the API.
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://ride-sharing-frontend-q35l6bpr4-t5-f6cf.vercel.app",
+        "https://ride-sharing-frontend.onrender.com",
         "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:5173",
-        "https://ride-sharing-frontend.vercel.app",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
     ],
-    #allow_origin_regex=r"https://ride-sharing-frontend.*\.vercel\.app",
-    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

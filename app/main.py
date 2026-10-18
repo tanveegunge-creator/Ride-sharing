@@ -27,6 +27,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://ride-sharing-frontend.vercel.app",
     ],
+    allow_origin_regex=r"https://ride-sharing-frontend.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

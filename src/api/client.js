@@ -1,10 +1,10 @@
+
 import axios from "axios";
 
-// Your FastAPI backend's base URL.
-//const BASE_URL = "https://ride-sharing-t930.onrender.com";
-//const BASE_URL =
- // import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const BASE_URL = "https://ride-sharing-t930.onrender.com";
+// ================= BASE URL =================
+const BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  "https://ride-sharing-t930.onrender.com";
 
 const client = axios.create({
   baseURL: BASE_URL,
@@ -19,55 +19,58 @@ export const login = (email, password) =>
 
 // ================= USERS =================
 export const createUser = (user) =>
-  // user: { name, email, password, phone, role: "driver" | "passenger" }
   client.post("/users/", user);
 
 // ================= PLACES =================
 export const getPlaces = () => client.get("/places/");
 
 export const createPlace = (place) =>
-  // place: { place_name }
   client.post("/places/", place);
 
 // ================= ROADS =================
 export const getRoads = () => client.get("/roads/");
 
 export const createRoad = (road) =>
-  // road: { source_place_id, destination_place_id, distance }
   client.post("/roads/", road);
 
 export const getShortestPath = (sourceId, destinationId) =>
   client.get("/roads/shortest-path/", {
-    params: { source_id: sourceId, destination_id: destinationId },
+    params: {
+      source_id: sourceId,
+      destination_id: destinationId,
+    },
   });
 
 // ================= RIDES =================
 export const getRides = () => client.get("/rides/");
 
-export const getRide = (rideId) => client.get(`/rides/${rideId}`);
+export const getRide = (rideId) =>
+  client.get(`/rides/${rideId}`);
 
 export const createRide = (ride) =>
-  // ride: { driver_id, source_place_id, destination_place_id, departure_time, vehicle_type, total_seats }
-  // NOTE: price is NOT sent — the backend calculates it from distance x rate.
   client.post("/rides/", ride);
 
-// ================= BOOKINGS =================
-export const getBookings = () => client.get("/bookings/");
+// Driver ride controls
+export const startRide = (rideId) =>
+  client.patch(`/rides/${rideId}/start`);
 
-export const getBooking = (bookingId) => client.get(`/bookings/${bookingId}`);
+export const endRide = (rideId) =>
+  client.patch(`/rides/${rideId}/end`);
+
+// ================= BOOKINGS =================
+export const getBookings = () =>
+  client.get("/bookings/");
+
+export const getBooking = (bookingId) =>
+  client.get(`/bookings/${bookingId}`);
 
 export const createBooking = (booking) =>
-  // booking: { ride_id, passenger_id, seats_booked }
   client.post("/bookings/", booking);
 
 export const getBookingApprovals = (bookingId) =>
   client.get(`/bookings/${bookingId}/approvals`);
 
 export const approveBooking = (bookingId, approverBookingId) =>
-  // Current backend version takes approver_booking_id in the body.
-  // If/when you switch to the JWT-authenticated version, this call
-  // simplifies to client.post(`/bookings/${bookingId}/approve`) with
-  // an Authorization header instead — no body needed.
   client.post(`/bookings/${bookingId}/approve`, {
     approver_booking_id: approverBookingId,
   });
@@ -77,19 +80,37 @@ export const rejectBooking = (bookingId, approverBookingId) =>
     approver_booking_id: approverBookingId,
   });
 
-// ================= PLACES: coordinates =================
+// Driver booking list
+export const getRideBookings = (rideId) =>
+  client.get(`/rides/${rideId}/bookings`);
+
+// ================= PAYMENT =================
+export const payBooking = (bookingId, paymentDetails = {}) =>
+  client.post(`/bookings/${bookingId}/pay`, paymentDetails);
+
+export const getPaymentInfo = (bookingId) =>
+  client.get(`/bookings/${bookingId}/payment`);
+
+export const confirmPayment = (bookingId, paymentDetails = {}) =>
+  client.post(`/bookings/${bookingId}/confirm-payment`, paymentDetails);
+
+// ================= PLACE COORDINATES =================
 export const updatePlaceLocation = (placeId, latitude, longitude) =>
-  client.patch(`/places/${placeId}/location`, { latitude, longitude });
+  client.patch(`/places/${placeId}/location`, {
+    latitude,
+    longitude,
+  });
 
 // ================= LIVE RIDE TRACKING =================
 export const updateRideLocation = (rideId, latitude, longitude) =>
-  client.put(`/rides/${rideId}/location`, { latitude, longitude });
+  client.put(`/rides/${rideId}/location`, {
+    latitude,
+    longitude,
+  });
 
 export const getRideLocation = (rideId) =>
   client.get(`/rides/${rideId}/location`);
 
-// Backend base URL as a ws(s):// URL, derived from BASE_URL so you don't
-// have to keep a second env var in sync with it.
 export const WS_BASE_URL = BASE_URL.replace(/^http/, "ws");
 
 export default client;

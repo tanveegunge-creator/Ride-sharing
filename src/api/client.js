@@ -1,7 +1,6 @@
 
 import axios from "axios";
 
-// ================= BASE URL =================
 const BASE_URL =
   import.meta.env.VITE_API_URL ||
   "https://ride-sharing-t930.onrender.com";
@@ -13,21 +12,20 @@ const client = axios.create({
   },
 });
 
-// ================= AUTH =================
+// Authentication and users
 export const login = (email, password) =>
   client.post("/auth/login", { email, password });
 
-// ================= USERS =================
 export const createUser = (user) =>
   client.post("/users/", user);
 
-// ================= PLACES =================
+// Places
 export const getPlaces = () => client.get("/places/");
 
 export const createPlace = (place) =>
   client.post("/places/", place);
 
-// ================= ROADS =================
+// Roads and shortest path
 export const getRoads = () => client.get("/roads/");
 
 export const createRoad = (road) =>
@@ -41,7 +39,7 @@ export const getShortestPath = (sourceId, destinationId) =>
     },
   });
 
-// ================= RIDES =================
+// Rides
 export const getRides = () => client.get("/rides/");
 
 export const getRide = (rideId) =>
@@ -50,16 +48,17 @@ export const getRide = (rideId) =>
 export const createRide = (ride) =>
   client.post("/rides/", ride);
 
-// Driver ride controls
 export const startRide = (rideId) =>
   client.patch(`/rides/${rideId}/start`);
 
 export const endRide = (rideId) =>
   client.patch(`/rides/${rideId}/end`);
 
-// ================= BOOKINGS =================
-export const getBookings = () =>
-  client.get("/bookings/");
+export const getRideBookings = (rideId) =>
+  client.get(`/rides/${rideId}/bookings`);
+
+// Bookings
+export const getBookings = () => client.get("/bookings/");
 
 export const getBooking = (bookingId) =>
   client.get(`/bookings/${bookingId}`);
@@ -80,11 +79,7 @@ export const rejectBooking = (bookingId, approverBookingId) =>
     approver_booking_id: approverBookingId,
   });
 
-// Driver booking list
-export const getRideBookings = (rideId) =>
-  client.get(`/rides/${rideId}/bookings`);
-
-// ================= PAYMENT =================
+// Payments
 export const payBooking = (bookingId, paymentDetails = {}) =>
   client.post(`/bookings/${bookingId}/pay`, paymentDetails);
 
@@ -92,16 +87,18 @@ export const getPaymentInfo = (bookingId) =>
   client.get(`/bookings/${bookingId}/payment`);
 
 export const confirmPayment = (bookingId, paymentDetails = {}) =>
-  client.post(`/bookings/${bookingId}/confirm-payment`, paymentDetails);
+  client.post(
+    `/bookings/${bookingId}/confirm-payment`,
+    paymentDetails
+  );
 
-// ================= PLACE COORDINATES =================
+// Location and tracking
 export const updatePlaceLocation = (placeId, latitude, longitude) =>
   client.patch(`/places/${placeId}/location`, {
     latitude,
     longitude,
   });
 
-// ================= LIVE RIDE TRACKING =================
 export const updateRideLocation = (rideId, latitude, longitude) =>
   client.put(`/rides/${rideId}/location`, {
     latitude,
